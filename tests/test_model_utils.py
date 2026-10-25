@@ -1,5 +1,6 @@
 """Tests for src.model_utils."""
 
+
 import pytest
 from src.model_utils import validate_predictions
 
