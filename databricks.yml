@@ -1,7 +1,11 @@
+
 # Databricks Asset Bundle configuration.
 
 bundle:
   name: retail-mlops-demo
+
+include:
+  - resources/*.yml
 
 workspace:
   root_path: ~/.bundle/${bundle.name}/${bundle.target}
