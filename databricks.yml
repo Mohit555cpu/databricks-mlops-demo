@@ -1,1 +1,12 @@
 # Databricks Asset Bundle configuration.
+
+bundle:
+  name: retail-mlops-demo
+
+workspace:
+  root_path: ~/.bundle/${bundle.name}/${bundle.target}
+
+targets:
+  dev:
+    mode: development
+    default: true
