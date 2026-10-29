@@ -11,14 +11,15 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  DATABRICKS_AUTH_TYPE: github-oidc
+  DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+  DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+
 jobs:
   deploy:
+    name: Validate and deploy
     runs-on: ubuntu-latest
-
-    env:
-      DATABRICKS_AUTH_TYPE: github-oidc
-      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
-      DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
 
     steps:
       - name: Checkout repository
@@ -37,6 +38,18 @@ jobs:
 
       - name: Deploy Bundle
         run: databricks bundle deploy -t dev
+
+  smoke_test:
+    name: Run Databricks smoke test
+    needs: deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
 
       - name: Run Databricks smoke test
         run: databricks bundle run -t dev ci_smoke_test
