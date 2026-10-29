@@ -6,12 +6,16 @@ resources:
       parameters:
         - name: batch_id
           default: ""
+      environments:
+        - environment_key: dental_inference
+          spec:
+            client: "1"
+            dependencies:
+              - "lightgbm>=4,<5"
       tasks:
         - task_key: forecast_with_champion
           notebook_task:
             notebook_path: ../../src/dental/dental_inference_forecast.py
             base_parameters:
               batch_id: "{{job.parameters.batch_id}}"
-          libraries:
-            - pypi:
-                package: "lightgbm>=4,<5"
+          environment_key: dental_inference
