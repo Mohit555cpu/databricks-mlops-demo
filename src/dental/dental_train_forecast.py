@@ -9,6 +9,7 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
+from delta.tables import DeltaTable
 from lightgbm import LGBMRegressor
 from mlflow import MlflowClient
 from mlflow.models import infer_signature
@@ -17,7 +18,12 @@ from sklearn.multioutput import MultiOutputRegressor
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 dbutils.widgets.text("run_timestamp", "", "Scheduled run timestamp UTC")
+dbutils.widgets.text("dataset_snapshot_id", "", "Immutable training data snapshot")
 run_timestamp = dbutils.widgets.get("run_timestamp").strip()
+dataset_snapshot_id = dbutils.widgets.get("dataset_snapshot_id").strip()
+if not dataset_snapshot_id:
+    raise ValueError("dataset_snapshot_id is required from the data-generation task")
+
 training_datetime = (
     datetime.fromisoformat(run_timestamp.replace("Z", "+00:00"))
     if run_timestamp
@@ -27,12 +33,73 @@ if training_datetime.tzinfo is None:
     training_datetime = training_datetime.replace(tzinfo=timezone.utc)
 training_timestamp = training_datetime.astimezone(timezone.utc).isoformat()
 
-raw_pdf = spark.table(SOURCE_TABLE).toPandas()
+snapshot_table = spark.table(SNAPSHOT_TABLE)
+snapshot_rows = snapshot_table.filter(
+    snapshot_table.dataset_snapshot_id == dataset_snapshot_id
+)
+snapshot_metadata = snapshot_rows.select("cutoff_month", "source_type").distinct()
+metadata = snapshot_metadata.collect()
+if len(metadata) != 1:
+    raise ValueError(
+        f"Expected exactly one cutoff/source type for snapshot "
+        f"{dataset_snapshot_id}, found {len(metadata)}"
+    )
+cutoff_month = pd.Period(metadata[0]["cutoff_month"], freq="M")
+source_type = metadata[0]["source_type"]
+raw_pdf = snapshot_rows.select(*RAW_COLUMNS).toPandas()
+raw_pdf = filter_snapshot_window(raw_pdf, cutoff_month)
 monthly_pdf = prepare_monthly_targets(raw_pdf)
 supervised_pdf = build_supervised_frame(raw_pdf)
 train_pdf, test_pdf, test_start_month = chronological_split(
     supervised_pdf,
     train_fraction=0.8,
+)
+training_start_month = monthly_pdf["event_month"].min()
+training_end_month = monthly_pdf["event_month"].max()
+train_target_start = train_pdf["target_month"].min()
+train_target_end = train_pdf["target_month"].max()
+test_target_start = test_pdf["target_month"].min()
+test_target_end = test_pdf["target_month"].max()
+
+training_examples_pdf = pd.concat(
+    [
+        train_pdf.assign(split="train"),
+        test_pdf.assign(split="test"),
+    ],
+    ignore_index=True,
+)
+for month_column in ("origin_month", "target_month"):
+    training_examples_pdf[month_column] = (
+        training_examples_pdf[month_column]
+        .dt.to_timestamp()
+        .dt.date
+    )
+training_examples_pdf["dataset_snapshot_id"] = dataset_snapshot_id
+training_examples_pdf["cutoff_month"] = str(cutoff_month)
+training_examples_pdf["source_type"] = source_type
+training_examples_df = spark.createDataFrame(training_examples_pdf)
+
+if not spark.catalog.tableExists(TRAINING_EXAMPLES_TABLE):
+    (
+        training_examples_df.limit(0)
+        .write.format("delta")
+        .saveAsTable(TRAINING_EXAMPLES_TABLE)
+    )
+training_examples_table = DeltaTable.forName(spark, TRAINING_EXAMPLES_TABLE)
+(
+    training_examples_table.alias("target")
+    .merge(
+        training_examples_df.alias("source"),
+        """
+        target.dataset_snapshot_id = source.dataset_snapshot_id
+        AND target.split = source.split
+        AND target.plan_id = source.plan_id
+        AND target.target_month = source.target_month
+        AND target.forecast_horizon = source.forecast_horizon
+        """,
+    )
+    .whenNotMatchedInsertAll()
+    .execute()
 )
 
 X_train = train_pdf[FEATURE_COLUMNS]
@@ -130,7 +197,6 @@ for target_name in TARGET_COLUMNS:
             )
         )
 
-latest_dataset_month = monthly_pdf["event_month"].max()
 mlflow.set_tracking_uri("databricks")
 mlflow.set_registry_uri("databricks-uc")
 mlflow.set_experiment("/Shared/dental-claims-forecasting")
@@ -146,10 +212,17 @@ with mlflow.start_run(run_name="dental_claims_forecast_candidate") as run:
             "baseline": "Statsmodels_HoltWinters",
             "forecast_horizon_months": 3,
             "train_fraction": 0.8,
+            "dataset_snapshot_id": dataset_snapshot_id,
+            "cutoff_month": str(cutoff_month),
+            "source_type": source_type,
+            "training_start_month": str(training_start_month),
+            "training_end_month": str(training_end_month),
             "train_examples": len(train_pdf),
             "test_examples": len(test_pdf),
-            "test_start_month": str(test_start_month),
-            "latest_dataset_month": str(latest_dataset_month),
+            "train_target_start_month": str(train_target_start),
+            "train_target_end_month": str(train_target_end),
+            "test_target_start_month": str(test_target_start),
+            "test_target_end_month": str(test_target_end),
             "feature_columns": ",".join(FEATURE_COLUMNS),
             "target_columns": ",".join(TARGET_COLUMNS),
         }
@@ -159,8 +232,15 @@ with mlflow.start_run(run_name="dental_claims_forecast_candidate") as run:
         {
             "model_status": "CANDIDATE_REQUIRES_MANUAL_APPROVAL",
             "training_timestamp_utc": training_timestamp,
-            "dataset_version": str(latest_dataset_month),
+            "dataset_snapshot_id": dataset_snapshot_id,
+            "cutoff_month": str(cutoff_month),
+            "source_type": source_type,
+            "training_start_month": str(training_start_month),
+            "training_end_month": str(training_end_month),
+            "train_target_start_month": str(train_target_start),
+            "train_target_end_month": str(train_target_end),
             "test_start_month": str(test_start_month),
+            "test_end_month": str(test_target_end),
             "model_name": MODEL_NAME,
         }
     )
@@ -184,18 +264,35 @@ with mlflow.start_run(run_name="dental_claims_forecast_candidate") as run:
             f"was found for run {run.info.run_id} in {MODEL_NAME}"
         )
     candidate_version = max(run_versions, key=lambda version: int(version.version))
-    client.set_model_version_tag(
-        MODEL_NAME,
-        candidate_version.version,
-        "approval_status",
-        "PENDING_REVIEW",
-    )
+    model_version_tags = {
+        "approval_status": "PENDING_REVIEW",
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "cutoff_month": str(cutoff_month),
+        "source_type": source_type,
+        "training_start_month": str(training_start_month),
+        "training_end_month": str(training_end_month),
+        "train_target_start_month": str(train_target_start),
+        "train_target_end_month": str(train_target_end),
+        "test_target_start_month": str(test_target_start),
+        "test_target_end_month": str(test_target_end),
+        "test_start_month": str(test_start_month),
+    }
+    for tag_key, tag_value in model_version_tags.items():
+        client.set_model_version_tag(
+            MODEL_NAME,
+            candidate_version.version,
+            tag_key,
+            tag_value,
+        )
 
     print(f"Candidate model: {MODEL_NAME}")
     print(f"Candidate version: {candidate_version.version}")
     print(f"Candidate URI: {model_info.model_uri}")
-    print(f"Latest dataset month: {latest_dataset_month}")
-    print(f"Chronological test starts: {test_start_month}")
+    print(f"Dataset snapshot ID: {dataset_snapshot_id}")
+    print(f"Training window: {training_start_month} through {training_end_month}")
+    print(f"Train target months: {train_target_start} through {train_target_end}")
+    print(f"Test target months: {test_target_start} through {test_target_end}")
+    print(f"Saved split data: {TRAINING_EXAMPLES_TABLE}")
     print(f"Training timestamp UTC: {training_timestamp}")
     print("Candidate is registered but NOT approved or promoted.")
     print(f"LightGBM and Statsmodels comparison metrics: {metric_values}")

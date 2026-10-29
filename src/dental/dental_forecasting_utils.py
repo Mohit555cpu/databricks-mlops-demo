@@ -10,8 +10,13 @@ import numpy as np
 import pandas as pd
 
 SOURCE_TABLE = "dental_forecasting.source.plan_monthly_claims"
+SNAPSHOT_TABLE = "dental_forecasting.training_data.plan_monthly_snapshots"
+TRAINING_EXAMPLES_TABLE = (
+    "dental_forecasting.training_data.supervised_examples"
+)
 MODEL_NAME = "dental_forecasting.models.dental_claims_forecast"
 FORECAST_TABLE = "dental_forecasting.predictions.plan_claims_forecast"
+SNAPSHOT_MONTHS = 120
 
 FEATURE_COLUMNS = [
     "plan_index",
@@ -36,6 +41,64 @@ RAW_COLUMNS = [
     "total_claim_amount",
     "dataset_version",
 ]
+
+
+def resolve_cutoff_month(
+    cutoff_month: str | pd.Period | None = None,
+    reference_timestamp: str | pd.Timestamp | None = None,
+) -> pd.Period:
+    """Return a YYYY-MM cutoff, defaulting to the last complete local month."""
+    if cutoff_month is not None:
+        return pd.Period(cutoff_month, freq="M")
+
+    if reference_timestamp is None:
+        now = pd.Timestamp.now(tz="Asia/Kolkata")
+    else:
+        now = pd.Timestamp(reference_timestamp)
+        if now.tzinfo is None:
+            now = now.tz_localize("Asia/Kolkata")
+        else:
+            now = now.tz_convert("Asia/Kolkata")
+    return now.tz_localize(None).to_period("M") - 1
+
+
+def snapshot_id_for_cutoff(cutoff_month: str | pd.Period) -> str:
+    """Build the stable immutable snapshot ID for a monthly cutoff."""
+    return f"dental-claims-{pd.Period(cutoff_month, freq='M')}"
+
+
+def filter_snapshot_window(
+    raw_data: pd.DataFrame,
+    cutoff_month: str | pd.Period,
+    lookback_months: int = SNAPSHOT_MONTHS,
+) -> pd.DataFrame:
+    """Keep exactly the complete monthly lookback ending at the cutoff."""
+    if lookback_months < 36:
+        raise ValueError("At least 36 months are required for seasonal forecasting")
+    if "event_month" not in raw_data:
+        raise ValueError("Source data is missing event_month")
+
+    cutoff = pd.Period(cutoff_month, freq="M")
+    start = cutoff - (lookback_months - 1)
+    filtered = raw_data.copy()
+    filtered["event_month"] = pd.to_datetime(filtered["event_month"]).dt.to_period("M")
+    filtered = filtered[
+        filtered["event_month"].between(start, cutoff)
+    ].copy()
+    if filtered.empty:
+        raise ValueError(
+            f"No source rows found in the snapshot window {start} through {cutoff}"
+        )
+    expected_months = set(pd.period_range(start, cutoff, freq="M"))
+    for plan_id, plan_rows in filtered.groupby("plan_id"):
+        actual_months = set(plan_rows["event_month"])
+        if actual_months != expected_months:
+            raise ValueError(
+                f"Snapshot history for {plan_id} must contain every month "
+                f"from {start} through {cutoff}"
+            )
+    filtered["event_month"] = filtered["event_month"].dt.to_timestamp().dt.date
+    return filtered.sort_values(["plan_id", "event_month"]).reset_index(drop=True)
 
 
 def _has_monthly_gaps(months: pd.Series) -> bool:

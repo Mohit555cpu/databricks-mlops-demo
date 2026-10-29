@@ -19,6 +19,9 @@ resources:
         - task_key: generate_monthly_demo_data
           notebook_task:
             notebook_path: ../../src/dental/dental_generate_synthetic_data.py
+            base_parameters:
+              run_timestamp: "{{job.start_time.iso_datetime}}"
+          environment_key: dental_training
         - task_key: train_candidate_model
           depends_on:
             - task_key: generate_monthly_demo_data
@@ -26,4 +29,5 @@ resources:
             notebook_path: ../../src/dental/dental_train_forecast.py
             base_parameters:
               run_timestamp: "{{job.start_time.iso_datetime}}"
+              dataset_snapshot_id: "{{tasks.generate_monthly_demo_data.values.dataset_snapshot_id}}"
           environment_key: dental_training
