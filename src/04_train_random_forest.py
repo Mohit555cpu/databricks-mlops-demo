@@ -1,4 +1,3 @@
-
 # Databricks notebook source
 """Train, evaluate, trace and conditionally register a Random Forest model."""
 
@@ -9,6 +8,7 @@ import mlflow
 import mlflow.sklearn
 import pandas as pd
 
+from mlflow import MlflowClient
 from mlflow.models import infer_signature
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import (
@@ -33,9 +33,9 @@ TARGET = "rating"
 MAX_MAE = float(os.getenv("MAX_MAE", "0.25"))
 
 MODEL_PARAMS = {
-    "n_estimators": 150,
-    "max_depth": 8,
-    "min_samples_leaf": 3,
+    "n_estimators": 500,
+    "max_depth": 15,
+    "min_samples_leaf": 6,
     "random_state": 43,
     "n_jobs": -1,
 }
@@ -109,7 +109,16 @@ def traced_predict(input_data: pd.DataFrame) -> list:
 
 
 # ---- Log run, trace, metrics and register model ----
-training_timestamp = datetime.now(timezone.utc).isoformat()
+dbutils.widgets.text("run_date", "", "Training run timestamp (UTC)")
+run_date = dbutils.widgets.get("run_date").strip()
+training_datetime = (
+    datetime.fromisoformat(run_date.replace("Z", "+00:00"))
+    if run_date
+    else datetime.now(timezone.utc)
+)
+if training_datetime.tzinfo is None:
+    training_datetime = training_datetime.replace(tzinfo=timezone.utc)
+training_timestamp = training_datetime.astimezone(timezone.utc).isoformat()
 
 with mlflow.start_run(run_name="random_forest_candidate") as run:
     mlflow.log_params(MODEL_PARAMS)
@@ -123,6 +132,8 @@ with mlflow.start_run(run_name="random_forest_candidate") as run:
     })
 
     mlflow.log_param("training_timestamp_utc", training_timestamp)
+    mlflow.set_tag("training_timestamp_utc", training_timestamp)
+    mlflow.set_tag("registered_model_name", MODEL_NAME)
 
     mlflow.log_metrics({
         "mae": mae,
@@ -158,8 +169,26 @@ with mlflow.start_run(run_name="random_forest_candidate") as run:
         registered_model_name=MODEL_NAME,
     )
 
-    print(f"Quality gate: PASSED")
+    registered_versions = MlflowClient().search_model_versions(
+        f"name='{MODEL_NAME}'"
+    )
+    run_versions = [
+        version
+        for version in registered_versions
+        if version.run_id == run.info.run_id and version.status == "READY"
+    ]
+    if not run_versions:
+        raise RuntimeError(
+            f"Model was logged, but no READY registered version was found "
+            f"for run {run.info.run_id} in {MODEL_NAME}."
+        )
+    registered_version = max(run_versions, key=lambda version: int(version.version))
+    mlflow.set_tag("registered_model_version", registered_version.version)
+
+    print("Quality gate: PASSED")
     print(f"Model URI: {model_info.model_uri}")
     print(f"Registered model: {MODEL_NAME}")
+    print(f"Registered model version: {registered_version.version}")
+    print(f"Training timestamp UTC: {training_timestamp}")
 
 print("Training, evaluation, tracing and registration completed.")

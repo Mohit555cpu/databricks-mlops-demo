@@ -1,20 +1,22 @@
-# Databricks inference job resource configuration.
-
 resources:
   jobs:
-    ci_smoke_test:
-      name: "[${bundle.target}] retail-mlops-ci-smoke-test"
-
+    monthly_random_forest_inference:
+      name: "[${bundle.target}] monthly-random-forest-inference"
+      schedule:
+        quartz_cron_expression: "0 0 9 1 * ?"
+        timezone_id: Asia/Kolkata
+        pause_status: UNPAUSED
+      max_concurrent_runs: 1
+      parameters:
+        - name: model_version
+          default: "7"
+        - name: batch_month
+          default: ""
       tasks:
-        - task_key: smoke_test
+        - task_key: run_monthly_inference
           notebook_task:
-            notebook_path: ../src/ci_smoke_test.py
-
-    train_random_forest:
-      name: "[${bundle.target}] random-forest-training"
-      tasks:
-        - task_key: train_model
-          notebook_task:
-            notebook_path: ../src/04_train_random_forest.py
+            notebook_path: ../src/08_batch_inference_random_forest.py
             base_parameters:
-              run_date: "{{job.start_time.iso_datetime}}"
+              model_version: "{{job.parameters.model_version}}"
+              batch_month: "{{job.parameters.batch_month}}"
+              batch_id: "{{job.id}}-{{job.start_time.iso_date}}"

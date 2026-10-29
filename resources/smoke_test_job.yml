@@ -1,0 +1,8 @@
+resources:
+  jobs:
+    ci_smoke_test:
+      name: "[${bundle.target}] retail-mlops-ci-smoke-test"
+      tasks:
+        - task_key: smoke_test
+          notebook_task:
+            notebook_path: ../src/ci_smoke_test.py
