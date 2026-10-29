@@ -1,0 +1,22 @@
+resources:
+  jobs:
+    ci_smoke_test:
+      name: "[${bundle.target}] retail-mlops-ci-smoke-test"
+      max_concurrent_runs: 1
+      parameters:
+        - name: model_version
+          default: "7"
+        - name: batch_month
+          default: ""
+      tasks:
+        - task_key: training_smoke_test
+          notebook_task:
+            notebook_path: ../../src/retail/training_smoke_test.py
+        - task_key: inference_smoke_test
+          depends_on:
+            - task_key: training_smoke_test
+          notebook_task:
+            notebook_path: ../../src/retail/inference_smoke_test.py
+            base_parameters:
+              model_version: "{{job.parameters.model_version}}"
+              batch_month: "{{job.parameters.batch_month}}"

@@ -1,5 +1,5 @@
 # Databricks notebook source
-"""Train, evaluate, trace and conditionally register a Random Forest model."""
+"""Train, evaluate, trace and conditionally register the retail Random Forest."""
 
 import os
 from datetime import datetime, timezone

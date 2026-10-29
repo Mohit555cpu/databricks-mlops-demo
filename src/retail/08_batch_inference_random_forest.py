@@ -1,5 +1,5 @@
 # Databricks notebook source
-"""Score one monthly customer batch with an explicitly selected UC model version."""
+"""Score a retail customer batch with an explicitly selected UC model version."""
 
 import mlflow
 from delta.tables import DeltaTable

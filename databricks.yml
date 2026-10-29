@@ -3,7 +3,7 @@ bundle:
   name: retail-mlops-demo
 
 include:
-  - resources/*.yml
+  - resources/**/*.yml
 
 sync:
   include:

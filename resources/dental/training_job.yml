@@ -1,0 +1,25 @@
+resources:
+  jobs:
+    dental_claims_training:
+      name: "[${bundle.target}] dental-claims-monthly-training"
+      schedule:
+        quartz_cron_expression: "0 0 5 1 * ?"
+        timezone_id: Asia/Kolkata
+        pause_status: PAUSED
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: generate_monthly_demo_data
+          notebook_task:
+            notebook_path: ../../src/dental/dental_generate_synthetic_data.py
+        - task_key: train_candidate_model
+          depends_on:
+            - task_key: generate_monthly_demo_data
+          notebook_task:
+            notebook_path: ../../src/dental/dental_train_forecast.py
+            base_parameters:
+              run_timestamp: "{{job.start_time.iso_datetime}}"
+          libraries:
+            - pypi:
+                package: "lightgbm>=4,<5"
+            - pypi:
+                package: "statsmodels>=0.14,<1"

@@ -10,6 +10,6 @@ resources:
       tasks:
         - task_key: train_model
           notebook_task:
-            notebook_path: ../src/04_train_random_forest.py
+            notebook_path: ../../src/retail/04_train_random_forest.py
             base_parameters:
               run_date: "{{job.start_time.iso_datetime}}"

@@ -15,7 +15,7 @@ resources:
       tasks:
         - task_key: run_monthly_inference
           notebook_task:
-            notebook_path: ../src/08_batch_inference_random_forest.py
+            notebook_path: ../../src/retail/08_batch_inference_random_forest.py
             base_parameters:
               model_version: "{{job.parameters.model_version}}"
               batch_month: "{{job.parameters.batch_month}}"

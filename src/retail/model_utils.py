@@ -1,4 +1,4 @@
-"""Utilities for the Databricks MLOps demo."""
+"""Utilities for the retail Databricks MLOps demo."""
 
 def validate_predictions(predictions, min_rating=1.0, max_rating=5.0):
     """Validate model prediction values."""

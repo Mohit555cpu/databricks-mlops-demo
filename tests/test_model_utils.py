@@ -2,7 +2,7 @@
 
 
 import pytest
-from src.model_utils import validate_predictions
+from src.retail.model_utils import validate_predictions
 
 
 def test_valid_predictions():
