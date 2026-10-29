@@ -37,3 +37,6 @@ jobs:
 
       - name: Deploy Bundle
         run: databricks bundle deploy -t dev
+
+      - name: Run Databricks smoke test
+        run: databricks bundle run -t dev ci_smoke_test

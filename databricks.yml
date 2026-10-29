@@ -8,6 +8,9 @@ include:
 sync:
   include:
     - src/**
+  exclude:
+    - "**/__pycache__/**"
+    - "**/*.pyc"
 
 workspace:
   root_path: ~/.bundle/${bundle.name}/${bundle.target}
