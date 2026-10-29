@@ -30,7 +30,7 @@ jobs:
       - name: Run unit tests
         run: |
           python -m pip install -r requirements-dev.txt
-          python -m pytest -q
+          python -m pytest tests/ -q
 
       - name: Validate Bundle
         run: databricks bundle validate -t dev
